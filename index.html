@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Reality Director · 小程序设计</title>
+<meta name="viewport" content="width=1440, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Serif+SC:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body data-theme="midnight">
+
+<div class="stage" id="stage"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="screens.jsx"></script>
+<script type="text/babel">
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "theme": "editorial",
+  "screen": "home",
+  "act": 2,
+  "membership": "monthly",
+  "hlShelf": "3p",
+  "roomReady": true,
+  "showAll": true
+}/*EDITMODE-END*/;
+
+const SCREENS = [
+  { key: 'home',   label: '01 · HomePage' },
+  { key: 'picker', label: '02 · EntryPicker' },
+  { key: 'setup',  label: '03 · SessionSetup' },
+  { key: 'room',   label: '04 · Room' },
+  { key: 'play',   label: '05 · PlayShell' },
+  { key: 'reveal', label: '06 · Reveal / Recap' },
+];
+
+const THEMES = [
+  { key:'midnight',  label:'深夜电影' },
+  { key:'editorial', label:'编辑杂志' },
+  { key:'dossier',   label:'调查仪表盘' },
+  { key:'script',    label:'舞台剧本' },
+];
+
+// Load persisted state
+function loadState() {
+  try {
+    const raw = localStorage.getItem('rd_state');
+    if (raw) return { ...TWEAK_DEFAULTS, ...JSON.parse(raw) };
+  } catch (e) {}
+  return { ...TWEAK_DEFAULTS };
+}
+
+function App() {
+  const [state, setState] = React.useState(loadState);
+  const [editMode, setEditMode] = React.useState(false);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
+  const [preselect, setPreselect] = React.useState('2p');
+
+  // Apply theme to body
+  React.useEffect(() => {
+    document.body.setAttribute('data-theme', state.theme);
+  }, [state.theme]);
+
+  // Persist
+  React.useEffect(() => {
+    try { localStorage.setItem('rd_state', JSON.stringify(state)); } catch(e) {}
+  }, [state]);
+
+  // Edit mode wire-up
+  React.useEffect(() => {
+    const onMsg = (e) => {
+      const d = e && e.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === '__activate_edit_mode')   setEditMode(true);
+      if (d.type === '__deactivate_edit_mode') setEditMode(false);
+    };
+    window.addEventListener('message', onMsg);
+    window.parent && window.parent.postMessage({type: '__edit_mode_available'}, '*');
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  const set = (patch) => setState(s => ({ ...s, ...patch }));
+
+  const go = (screen) => {
+    if (screen === 'picker') { setPickerOpen(true); return; }
+    set({ screen });
+  };
+
+  const openPicker = () => setPickerOpen(true);
+  const closePicker = () => setPickerOpen(false);
+  const pickFromSheet = (key) => {
+    setPreselect(key);
+    setPickerOpen(false);
+    set({ screen: 'setup' });
+  };
+
+  // Render a single phone by screen key
+  const renderScreen = (screenKey) => {
+    const common = {
+      go,
+      membership: state.membership,
+      hlShelf: state.hlShelf,
+    };
+    switch (screenKey) {
+      case 'home':
+        return <HomePage {...common} setPreselect={setPreselect} openPicker={openPicker} />;
+      case 'setup':
+        return <SessionSetupPage {...common} preselect={preselect} />;
+      case 'room':
+        return <RoomPage {...common}
+          preselect={preselect}
+          roomReady={state.roomReady}
+          toggleRoomReady={() => set({ roomReady: !state.roomReady })}
+        />;
+      case 'play':
+        return <PlayShellPage {...common}
+          act={state.act}
+          setAct={(n) => set({ act: n })}
+        />;
+      case 'reveal':
+        return <RevealAndRecapPage {...common} setPreselect={setPreselect} />;
+      default:
+        return <HomePage {...common} setPreselect={setPreselect} openPicker={openPicker} />;
+    }
+  };
+
+  const phoneWithLabel = (screenKey, label) => (
+    <div key={screenKey} style={{position:'relative'}}>
+      <div className="phone-label">{label}</div>
+      <div className="phone">
+        {renderScreen(screenKey)}
+        {screenKey === state.screen && pickerOpen &&
+          <EntryPickerSheet close={closePicker} pick={pickFromSheet} />}
+      </div>
+    </div>
+  );
+
+  const phones = state.showAll
+    ? SCREENS.filter(s => s.key !== 'picker').map(s => phoneWithLabel(s.key, s.label))
+    : [phoneWithLabel(state.screen, (SCREENS.find(s => s.key === state.screen) || SCREENS[0]).label)];
+
+  return (
+    <>
+      {phones}
+
+      {/* Left-bottom nav */}
+      <div className="nav-dots">
+        <h5>View</h5>
+        <button
+          className={state.showAll ? 'active' : ''}
+          onClick={() => set({ showAll: true })}
+        >All 6 Screens</button>
+        <button
+          className={!state.showAll ? 'active' : ''}
+          onClick={() => set({ showAll: false })}
+        >Single Focus</button>
+        {!state.showAll && (
+          <>
+            <div style={{height: 6, borderTop: '1px solid #333', marginTop: 4}} />
+            {SCREENS.filter(s => s.key !== 'picker').map(s => (
+              <button
+                key={s.key}
+                className={state.screen === s.key ? 'active' : ''}
+                onClick={() => set({ screen: s.key })}
+              >{s.label}</button>
+            ))}
+            <button onClick={() => setPickerOpen(true)}>▸ 弹出 EntryPicker</button>
+          </>
+        )}
+      </div>
+
+      {/* Right-bottom tweaks */}
+      {editMode && (
+        <div className="tweaks-panel">
+          <h4>Tweaks <span style={{color:'#8a8578', fontSize:9}}>REALITY DIRECTOR</span></h4>
+
+          <div className="tw-section">
+            <div className="tw-label">视觉主题</div>
+            <div className="tw-row">
+              {THEMES.map(t => (
+                <button key={t.key}
+                  className={`tw-btn ${state.theme === t.key ? 'active' : ''}`}
+                  onClick={() => {
+                    set({ theme: t.key });
+                    window.parent && window.parent.postMessage({
+                      type: '__edit_mode_set_keys', edits: { theme: t.key }
+                    }, '*');
+                  }}
+                >{t.label}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="tw-section">
+            <div className="tw-label">局状态 (PlayShell)</div>
+            <div className="tw-row">
+              {[
+                {k:1, label:'第 1 幕'},
+                {k:2, label:'第 2 幕'},
+              ].map(a => (
+                <button key={a.k}
+                  className={`tw-btn ${state.act === a.k ? 'active' : ''}`}
+                  onClick={() => {
+                    set({ act: a.k });
+                    window.parent && window.parent.postMessage({
+                      type: '__edit_mode_set_keys', edits: { act: a.k }
+                    }, '*');
+                  }}
+                >{a.label}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="tw-section">
+            <div className="tw-label">货架高亮 (Home)</div>
+            <div className="tw-row">
+              {[
+                {k:'1p', label:'独行'},
+                {k:'2p', label:'双人'},
+                {k:'3p', label:'组局'},
+                {k:'',   label:'无'},
+              ].map(s => (
+                <button key={s.k || 'none'}
+                  className={`tw-btn ${state.hlShelf === s.k ? 'active' : ''}`}
+                  onClick={() => {
+                    set({ hlShelf: s.k });
+                    window.parent && window.parent.postMessage({
+                      type: '__edit_mode_set_keys', edits: { hlShelf: s.k }
+                    }, '*');
+                  }}
+                >{s.label}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="tw-section">
+            <div className="tw-label">会员身份</div>
+            <div className="tw-row">
+              {[
+                {k:'free', label:'免费'},
+                {k:'monthly', label:'月卡'},
+                {k:'yearly', label:'年卡'},
+              ].map(m => (
+                <button key={m.k}
+                  className={`tw-btn ${state.membership === m.k ? 'active' : ''}`}
+                  onClick={() => {
+                    set({ membership: m.k });
+                    window.parent && window.parent.postMessage({
+                      type: '__edit_mode_set_keys', edits: { membership: m.k }
+                    }, '*');
+                  }}
+                >{m.label}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="tw-section">
+            <div className="tw-label">Room (等待 / 准备)</div>
+            <div className="tw-row">
+              <button
+                className={`tw-btn ${!state.roomReady ? 'active' : ''}`}
+                onClick={() => {
+                  set({ roomReady: false });
+                  window.parent && window.parent.postMessage({
+                    type: '__edit_mode_set_keys', edits: { roomReady: false }
+                  }, '*');
+                }}
+              >等待中</button>
+              <button
+                className={`tw-btn ${state.roomReady ? 'active' : ''}`}
+                onClick={() => {
+                  set({ roomReady: true });
+                  window.parent && window.parent.postMessage({
+                    type: '__edit_mode_set_keys', edits: { roomReady: true }
+                  }, '*');
+                }}
+              >双方就绪</button>
+            </div>
+          </div>
+
+          <div style={{fontFamily:'var(--mono)', fontSize:9, color:'#666', marginTop:8, lineHeight:1.5}}>
+            点击任意货架 / 按钮即可真实跳转<br/>
+            状态保存在本地，刷新不丢
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('stage'));
+root.render(<App />);
+</script>
+
+</body>
+</html>
